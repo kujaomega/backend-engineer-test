@@ -1,12 +1,8 @@
 import Fastify from 'fastify';
 import {Pool} from 'pg';
-import type {Block} from './models';
-import {
-    deleteBlocksWhereHeightsEqual,
-    getBlocksHeightGreaterThan,
-    getLastBlock,
-    insertBlock
-} from "./block/database.ts";
+import type {Block} from '../models';
+import {deleteBlocksWhereHeightsEqual, getBlocksHeightGreaterThan, getLastBlock, insertBlock} from "./database.ts";
+
 
 const fastify = Fastify({logger: true});
 const dbconnector = require('./init.ts')
@@ -25,44 +21,6 @@ const {getBalance} = require("./balance/service.ts")
 fastify.register(dbconnector)
 
 let balance = {}
-
-fastify.post('/blocks', async (request, reply) => {
-    // Update balance of each address accordingly
-    // Store blocks, dictionary of balances
-    const block = request.body as Block;
-    await storeBlock(block)
-
-    // await storeBlock(block);
-    return {result: 'ok'};
-});
-
-fastify.get('/balance/:address', async (request, reply) => {
-    const address = request.params.address
-    const {balance} = fastify.balance;
-    return await getBalance(address, balance)
-});
-
-const queryStringJsonSchema = {
-    type: 'object',
-    properties: {
-        height: {type: 'number'}
-    }
-}
-
-const schema = {
-    // params: paramsJsonSchema,
-    querystring: queryStringJsonSchema
-}
-
-fastify.post('/rollback', {schema}, async (request, reply) => {
-    //rollback the state of the indexer to a given height. Undo transactions added after a given height
-    console.log('params', request.query)
-    if (request.query.height !== undefined) {
-        await rollback(request.query.height)
-    }
-
-    return {result: 'ok'}
-});
 
 async function rollback(height: number) {
     const {pool} = fastify.db;
@@ -176,15 +134,6 @@ async function getBlockTransaction(pool: Pool, transactionId: string) {
     return rows.rows[0]
 }
 
-async function validateEmptyDatabase(pool: Pool) {
-    const rows = await pool.query(`SELECT count(*)
-                                   FROM blocks;`);
-    const rowsNumb = rows.rows[0].count
-    if (rowsNumb != 0) {
-        throw new BadRequest()
-    }
-}
-
 async function validateBlockId(block: Block) {
     const blockHash = await createBlockHash(block)
     console.log('blockHash:', blockHash)
@@ -200,30 +149,9 @@ async function createBlockHash(block: Block) {
     return createHash('sha256').update(hashKey).digest('hex')
 }
 
-async function deleteBlocks(pool: Pool) {
-    await pool.query(`
-    TRUNCATE blocks;
-    DELETE FROM blocks;
-  `);
+export{
+    storeBlock
 }
-
-async function deleteTransactions(pool: Pool) {
-    await pool.query(`
-    TRUNCATE transactions;
-    DELETE FROM transactions;
-  `);
-}
-
-try {
-    await fastify.listen({
-        port: 3000,
-        host: '0.0.0.0'
-    })
-} catch (err) {
-    fastify.log.error(err)
-    process.exit(1)
-}
-
 export const exportedForTesting = {
     validateBlockId,
     createBlockHash,
