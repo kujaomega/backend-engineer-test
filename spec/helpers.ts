@@ -46,6 +46,28 @@ const secondBlockRightFormat = {
     }]
 }
 
+const thirdBlockRightFormat = {
+  "id": "4e5f22a2abacfaf2dcaaeb1652aec4eb65028d0f831fa435e6b1ee931c6799ec",
+  "height": 3,
+  "transactions": [{
+    "id": "tx3",
+    "inputs": [{
+      "txId": "tx2",
+      "index": 1
+    }],
+    "outputs": [{
+      "address": "addr4",
+      "value": 2
+    }, {
+      "address": "addr5",
+      "value": 2
+    }, {
+      "address": "addr6",
+      "value": 2
+    }]
+  }]
+}
+
 const validInputsOutputsPgMock = {
     Pool: {
         async query() {
@@ -102,6 +124,7 @@ export {
     firstBlockRightFormat,
     firstBlockBadId,
     secondBlockRightFormat,
+    thirdBlockRightFormat,
     mockedValidInputsOutputsPool,
     mockedInvalidInputsOutputsPool
 }

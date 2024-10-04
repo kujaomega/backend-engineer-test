@@ -1,11 +1,14 @@
-import Fastify from 'fastify';
 import {Pool} from 'pg';
-import type {Block} from '../models';
-import {deleteBlocksWhereHeightsEqual, getBlocksHeightGreaterThan, getLastBlock, insertBlock} from "./database.ts";
+import type {Block} from './models';
+import type {Transaction} from "./models";
+import {
+    deleteBlocksWhereHeightsEqual,
+    getBlocksHeightGreaterThan,
+    getLastBlock,
+    insertBlock
+} from "./block/database.ts";
+import {getTransactionsOrderByIdLimitOffset} from "./transaction/database.ts";
 
-
-const fastify = Fastify({logger: true});
-const dbconnector = require('./init.ts')
 const {BadRequest} = require("http-errors")
 const {createHash} = require('crypto');
 
@@ -15,16 +18,7 @@ const {
     deleteTransactionsWhereIdsEqual
 } = require("./transaction/database.ts")
 
-const {getBalance} = require("./balance/service.ts")
-
-
-fastify.register(dbconnector)
-
-let balance = {}
-
-async function rollback(height: number) {
-    const {pool} = fastify.db;
-    const {balance} = fastify.balance;
+async function rollback(height: number, pool: Pool, balance: Map<string, number>) {
     const rows = await getBlocksHeightGreaterThan(pool, height)
     const blocksToDelete = []
     const transactionsToDelete = []
@@ -50,8 +44,7 @@ async function rollback(height: number) {
     await deleteTransactionsWhereIdsEqual(pool, transactionsToDelete)
 }
 
-async function storeBlock(block: Block) {
-    const {pool} = fastify.db;
+async function storeBlock(block: Block, pool: Pool, balance: Map<string, number>) {
     // await deleteBlocks(pool)
     // await deleteTransactions(pool)
 
@@ -65,11 +58,10 @@ async function storeBlock(block: Block) {
         await validateBlockId(block)
     }
     await insertBlockDb(pool, block)
-    await adjustBalance(pool, block)
+    await addBlockBalance(pool, block, balance)
 }
 
-async function adjustBalance(pool: Pool, block: Block) {
-    const {balance} = fastify.balance;
+async function addBlockBalance(pool: Pool, block: Block, balance: Map<string, number>) {
     for (const transaction of block.transactions) {
         for (const input of transaction.inputs) {
             const originTransaction = await getBlockTransaction(pool, input.txId)
@@ -91,13 +83,13 @@ async function adjustBalance(pool: Pool, block: Block) {
 
 async function validateFirstBlock(block: Block) {
     if (block.height != 1) {
-        throw new BadRequest()
+        throw new BadRequest("It's not the first block")
     }
 }
 
 async function validateBlockHeight(lastBlock: Block, block: Block) {
     if (block.height - 1 !== lastBlock.height) {
-        throw new BadRequest()
+        throw new BadRequest("Wrong block height")
     }
 }
 
@@ -119,26 +111,23 @@ async function validateInputsOutputs(pool: Pool, actualBlock: Block) {
             outputs += newOutput.value
         }
         if (inputs !== outputs) {
-            throw new BadRequest()
+            throw new BadRequest("Inputs and Outputs doesn't match")
         }
     }
 }
 
 async function getBlockTransaction(pool: Pool, transactionId: string) {
-    console.log("get transactionid1", transactionId)
     const rows = await getTransactionsWhereIdEquals(pool, transactionId)
-    console.log("get transactionid2", transactionId)
     if (!rows) {
-        throw new BadRequest()
+        throw new BadRequest("Transaction doesn't exist")
     }
     return rows.rows[0]
 }
 
 async function validateBlockId(block: Block) {
     const blockHash = await createBlockHash(block)
-    console.log('blockHash:', blockHash)
     if (block.id != blockHash) {
-        throw new BadRequest()
+        throw new BadRequest("Block id doesn't have a valid hash")
     }
 }
 
@@ -149,10 +138,49 @@ async function createBlockHash(block: Block) {
     return createHash('sha256').update(hashKey).digest('hex')
 }
 
-export{
-    storeBlock
+async function getInitialBalance(pool: typeof Pool) {
+    const limit = 20
+    let offset = 0
+    let resultSize = 20
+    const balance: Map<string, number> = new Map()
+    const inputsDict: Map<string, Transaction> = new Map()
+    while (resultSize === limit) {
+        const transactions = await getTransactionsOrderByIdLimitOffset(pool, limit, offset)
+        for (const transaction of transactions.rows) {
+            inputsDict.set(transaction.id, transaction)
+            for (const output of transaction.outputs) {
+                if (output.address in balance) {
+                    balance.set(output.address, balance.get(output.address) + output.value)
+                } else {
+                    balance.set(output.address, output.value)
+                }
+            }
+            for (const input of transaction.inputs) {
+                const transactionId = input.txId
+                const pastTransaction = inputsDict.get(input.txId)
+                if (pastTransaction === undefined) {
+                    continue
+                }
+                const outputOrigin = pastTransaction.outputs[input.index]
+                const originBalance = balance.get(outputOrigin.address)
+                if (originBalance === undefined) {
+                    continue
+                }
+                balance.set(outputOrigin.address, originBalance - outputOrigin.value)
+            }
+        }
+        resultSize = transactions.rows.length
+    }
+    return balance
+}
+
+export {
+    storeBlock,
+    rollback,
+    getInitialBalance
 }
 export const exportedForTesting = {
+    validateBlockHeight,
     validateBlockId,
     createBlockHash,
     validateInputsOutputs,
